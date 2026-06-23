@@ -16,6 +16,13 @@
             overflow-x: auto;
             box-sizing: border-box;
         }
+        #captureArea {
+            display: inline-block;
+            flex: 0 0 auto;
+            padding: 20px;
+            background: #d3d3d3;
+            box-sizing: border-box;
+        }
         #led-container {
             background-color: #181818;
             padding: 1px 150px 3px 80px;
@@ -86,6 +93,7 @@
 </head>
 <body>
 
+    <div id="captureArea">
     <div id="led-container" style="position:relative;">
         <canvas id="ledCanvas" width="960" height="96"></canvas>
         <svg class="speaker-grille" viewBox="0 0 78 86" role="img" aria-label="スピーカーグリル" xmlns="http://www.w3.org/2000/svg">
@@ -100,6 +108,7 @@
             <rect x="9.5" y="11.2" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 15.5 13.2)"/> <rect x="23.0" y="11.1" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 29.0 13.1)"/> <rect x="36.5" y="10.9" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 42.5 12.9)"/> <rect x="-2.7" y="23.6" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 3.3 25.6)"/> <rect x="9.6" y="24.2" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 15.6 26.2)"/> <rect x="23.0" y="24.1" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 29.0 26.1)"/> <rect x="36.4" y="24.2" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 42.4 26.2)"/> <rect x="50.1" y="23.9" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 56.1 25.9)"/> <rect x="-3.0" y="37.1" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 3.0 39.1)"/> <rect x="9.3" y="37.8" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 15.3 39.8)"/> <rect x="22.9" y="37.6" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 28.9 39.6)"/> <rect x="36.4" y="37.2" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 42.4 39.2)"/> <rect x="50.2" y="37.2" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 56.2 39.2)"/> <rect x="-3.0" y="50.3" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 3.0 52.3)"/> <rect x="9.5" y="50.8" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 15.5 52.8)"/> <rect x="22.8" y="50.8" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 28.8 52.8)"/> <rect x="36.5" y="50.4" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 42.5 52.4)"/> <rect x="50.2" y="50.4" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 56.2 52.4)"/> <rect x="9.1" y="64.5" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 15.1 66.5)"/> <rect x="22.7" y="64.2" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 28.7 66.2)"/> <rect x="36.6" y="63.8" width="12.0" height="4.5" rx="1.6" ry="1.6" fill="#050505" transform="rotate(134.5 42.6 65.8)"/>
         </g>
     </svg>
+    </div>
     </div>
 
     <div id="controls">
@@ -116,9 +125,17 @@
                 <option value="left">左寄せ</option>
                 <option value="center">中央揃え</option>
                 <option value="right">右寄せ</option>
-                <option value="scroll">右から左へスクロール</option>
+                <option value="scroll">スクロール</option>
             </select>
             <button id="updateBtn">更新・反映</button>
+        </div>
+        <div class="control-group" style="margin-top: 15px;">
+            <label for="exportFormat">画像出力:</label>
+            <select id="exportFormat">
+                <option value="png">PNG</option>
+                <option value="jpg">JPG</option>
+            </select>
+            <button id="exportBtn">画像を出力</button>
         </div>
     </div>
 
@@ -7478,6 +7495,7 @@ const FONT_DATA = {
     ' ': Array.from({length: 16}, () => Array(8).fill(0))
 };
 
+
 // ベースとなる3色LEDの発光カラー定義
 const BASE_COLORS = {
     1: { r: 128, g: 255, b: 0 },   // 黄緑
@@ -7698,7 +7716,136 @@ document.getElementById('updateBtn').addEventListener('click', updateDisplay);
 document.getElementById('inputText').addEventListener('keypress', function(e) {
     if (e.key === 'Enter') updateDisplay();
 });
-document.getElementById('alignSelect').addEventListener('change', updateDisplay);
+
+const exportBtn = document.getElementById('exportBtn');
+const exportFormat = document.getElementById('exportFormat');
+
+function updateExportButtonState() {
+    const isScroll = document.getElementById('alignSelect').value === 'scroll';
+    exportBtn.disabled = isScroll;
+    exportBtn.style.opacity = isScroll ? '0.5' : '1';
+    exportBtn.style.cursor = isScroll ? 'not-allowed' : 'pointer';
+}
+
+function svgToDataURL(svgElement) {
+    const clone = svgElement.cloneNode(true);
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    const serialized = new XMLSerializer().serializeToString(clone);
+    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(serialized);
+}
+
+function roundRectPath(ctx, x, y, width, height, radius) {
+    const r = Math.min(radius, width / 2, height / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + width - r, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+    ctx.lineTo(x + width, y + height - r);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+    ctx.lineTo(x + r, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+}
+
+
+function parseBorderRadius(value) {
+    if (!value) return 0;
+    const m = String(value).match(/([\d.]+)px/);
+    return m ? parseFloat(m[1]) : 0;
+}
+
+function drawRoundedRect(ctx, x, y, width, height, radius) {
+    const r = Math.max(0, Math.min(radius, Math.min(width, height) / 2));
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + width - r, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+    ctx.lineTo(x + width, y + height - r);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+    ctx.lineTo(x + r, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+}
+
+async function exportVisibleImage() {
+    if (document.getElementById('alignSelect').value === 'scroll') {
+        alert('スクロール表示中は画像出力できません。左寄せ・中央揃え・右寄せに切り替えてください。');
+        return;
+    }
+
+    const captureArea = document.getElementById('captureArea');
+    const ledContainer = document.getElementById('led-container');
+    const svg = ledContainer.querySelector('.speaker-grille');
+    const areaRect = captureArea.getBoundingClientRect();
+    const ledRect = ledContainer.getBoundingClientRect();
+    const svgRect = svg.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = Math.max(1, Math.round(areaRect.width));
+    exportCanvas.height = Math.max(1, Math.round(areaRect.height));
+    const exCtx = exportCanvas.getContext('2d');
+
+    const areaStyle = getComputedStyle(captureArea);
+    exCtx.fillStyle = areaStyle.backgroundColor || '#d3d3d3';
+    exCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+
+    // led-container の黒い角丸の背景も再現する
+    const ledStyle = getComputedStyle(ledContainer);
+    const ledX = Math.round(ledRect.left - areaRect.left);
+    const ledY = Math.round(ledRect.top - areaRect.top);
+    const ledW = Math.round(ledRect.width);
+    const ledH = Math.round(ledRect.height);
+    const ledRadius = parseBorderRadius(ledStyle.borderRadius);
+    exCtx.fillStyle = ledStyle.backgroundColor || '#181818';
+    drawRoundedRect(exCtx, ledX, ledY, ledW, ledH, ledRadius);
+    exCtx.fill();
+
+    const canvasImg = new Image();
+    canvasImg.src = canvas.toDataURL('image/png');
+
+    const svgImg = new Image();
+    svgImg.src = svgToDataURL(svg);
+
+    await Promise.all([
+        new Promise((resolve, reject) => {
+            canvasImg.onload = resolve;
+            canvasImg.onerror = reject;
+        }),
+        new Promise((resolve, reject) => {
+            svgImg.onload = resolve;
+            svgImg.onerror = reject;
+        })
+    ]);
+
+    const canvasX = Math.round(canvasRect.left - areaRect.left);
+    const canvasY = Math.round(canvasRect.top - areaRect.top);
+    exCtx.drawImage(canvasImg, canvasX, canvasY);
+
+    const svgX = Math.round(svgRect.left - areaRect.left);
+    const svgY = Math.round(svgRect.top - areaRect.top);
+    exCtx.drawImage(svgImg, svgX, svgY, Math.round(svgRect.width), Math.round(svgRect.height));
+
+    const fmt = exportFormat.value;
+    const mime = fmt === 'jpg' ? 'image/jpeg' : 'image/png';
+    const quality = fmt === 'jpg' ? 0.95 : undefined;
+    const dataURL = exportCanvas.toDataURL(mime, quality);
+
+    const a = document.createElement('a');
+    a.href = dataURL;
+    a.download = `led_display.${fmt}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+}
+
+exportBtn.addEventListener('click', exportVisibleImage);
+document.getElementById('alignSelect').addEventListener('change', updateExportButtonState);
+updateExportButtonState();
 
 updateDisplay();
 </script>
