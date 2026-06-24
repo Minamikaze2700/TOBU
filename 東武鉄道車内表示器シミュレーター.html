@@ -130,13 +130,19 @@
             </select>
             <button id="updateBtn">更新・反映</button>
         </div>
-        <div class="control-group" style="margin-top: 15px;">
+        <div class="legend" id="runInfoNote" style="margin-top: 4px;">
+            「運行情報を表示」は同階層の「運行情報.txt」を自動読み込みして、1行ずつ順番に流します。
+        </div>
+        <div class="control-group" id="exportControlGroup" style="margin-top: 15px;">
             <label for="exportFormat">出力形式:</label>
             <select id="exportFormat">
                 <option value="png">PNG</option>
                 <option value="jpg">JPG</option>
             </select>
             <button id="exportBtn">画像を出力</button>
+        </div>
+        <div class="legend" id="exportNote" style="margin-top: 4px;">
+            左寄せ・中央揃え・右寄せでは画像を出力します。
         </div>
     </div>
 
@@ -7838,19 +7844,69 @@ const displayBuffer = Array.from({ length: ROWS }, () =>
     Array.from({ length: COLS }, () => ({ colorType: 0, alpha: 0.0 }))
 );
 
-function getGlyphWidth(char) {
+function getGlyphWidth(char, options = {}) {
     const glyph = FONT_DATA[char];
     if (glyph && glyph.length > 0 && Array.isArray(glyph[0])) {
         return glyph[0].length;
     }
-    return char.charCodeAt(0) > 255 ? 16 : 8;
+    return options.forceFullWidth ? 16 : (char.charCodeAt(0) > 255 ? 16 : 8);
 }
 
 const runtimeGlyphCache = new Map();
 const runtimeGlyphCanvas = document.createElement('canvas');
+const RUN_INFO_BITMAP_FONT_FAMILY = 'RunInfoBitmap16';
+let runInfoFontLoadPromise = null;
 
-function rasterizeGlyph(char, width) {
-    const cacheKey = `${char}:${width}`;
+async function ensureRunInfoBitmapFontLoaded() {
+    if (runInfoFontLoadPromise) {
+        return runInfoFontLoadPromise;
+    }
+
+    runInfoFontLoadPromise = (async () => {
+        const tryLoaders = [
+            async () => {
+                const font = new FontFace(RUN_INFO_BITMAP_FONT_FAMILY, 'url("./msx-font.TTF")');
+                await font.load();
+                document.fonts.add(font);
+                await document.fonts.ready;
+                return font.family;
+            },
+            async () => {
+                const response = await fetch('msx-font.TTF', { cache: 'no-store' });
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                const blob = await response.blob();
+                const objectUrl = URL.createObjectURL(blob);
+                try {
+                    const font = new FontFace(RUN_INFO_BITMAP_FONT_FAMILY, `url("${objectUrl}")`);
+                    await font.load();
+                    document.fonts.add(font);
+                    await document.fonts.ready;
+                    return font.family;
+                } finally {
+                    URL.revokeObjectURL(objectUrl);
+                }
+            }
+        ];
+
+        for (const loader of tryLoaders) {
+            try {
+                return await loader();
+            } catch (error) {
+                // 次の方法を試す
+            }
+        }
+
+        return null;
+    })();
+
+    return runInfoFontLoadPromise;
+}
+
+function rasterizeGlyph(char, width, options = {}) {
+    const fontFamily = options.fontFamily || 'sans-serif';
+    const cacheKey = `${char}:${width}:${fontFamily}`;
     if (runtimeGlyphCache.has(cacheKey)) {
         return runtimeGlyphCache.get(cacheKey);
     }
@@ -7866,7 +7922,9 @@ function rasterizeGlyph(char, width) {
     gctx.fillStyle = '#000000';
     gctx.textAlign = 'center';
     gctx.textBaseline = 'middle';
-    gctx.font = `${width >= 16 ? 14 : 8}px sans-serif`;
+    gctx.imageSmoothingEnabled = false;
+    const fontSize = width >= 16 ? 16 : 8;
+    gctx.font = `${fontSize}px "${fontFamily}", sans-serif`;
     gctx.fillText(char, glyphWidth / 2, ROWS / 2 + 1);
 
     const imageData = gctx.getImageData(0, 0, glyphWidth, ROWS).data;
@@ -7884,15 +7942,17 @@ function rasterizeGlyph(char, width) {
     return glyph;
 }
 
-function getGlyphBitmap(char) {
+function getGlyphBitmap(char, options = {}) {
     const glyph = FONT_DATA[char];
     if (glyph && glyph.length > 0 && Array.isArray(glyph[0])) {
         return glyph;
     }
-    return rasterizeGlyph(char, getGlyphWidth(char));
+
+    const width = getGlyphWidth(char, options);
+    return rasterizeGlyph(char, width, options);
 }
 
-function parseText(text) {
+function parseText(text, options = {}) {
     const tokens = [];
     let currentColor = 1;
     let i = 0;
@@ -7908,7 +7968,7 @@ function parseText(text) {
         }
 
         const char = text[i];
-        const width = getGlyphWidth(char);
+        const width = getGlyphWidth(char, options);
         const isFullWidth = width >= 16;
 
         tokens.push({
@@ -7922,16 +7982,16 @@ function parseText(text) {
     return tokens;
 }
 
-function generateMessageMatrix(tokens) {
+function generateMessageMatrix(tokens, options = {}) {
     let totalWidth = 0;
     tokens.forEach(t => totalWidth += t.width);
-    
+
     const matrix = Array.from({ length: ROWS }, () => Array(totalWidth).fill(0));
-    
+
     let currentX = 0;
     tokens.forEach(token => {
-        const font = FONT_DATA[token.char] || FONT_DATA[token.isFullWidth ? ' ' : ' '];
-        
+        const font = options.useMissingGlyphFallback ? getGlyphBitmap(token.char, options) : FONT_DATA[token.char];
+
         for (let row = 0; row < ROWS; row++) {
             for (let col = 0; col < token.width; col++) {
                 const isLit = font[row] ? font[row][col] : 0;
@@ -7942,11 +8002,10 @@ function generateMessageMatrix(tokens) {
         }
         currentX += token.width;
     });
-    
+
     return { matrix, totalWidth };
 }
 
-// 【大幅変更】残光処理を反映してCanvasに描画する関数
 function drawLEDWithAfterglow() {
     ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -7956,7 +8015,7 @@ function drawLEDWithAfterglow() {
             const dot = displayBuffer[row][col];
             
             // 塗りつぶしのベース色を決定
-            let fillStyle = '#252525'; // 完全消灯時のLEDの素子色
+            let fillStyle = '#3a3a3a'; // 完全消灯時のLEDの素子色
             
             if (dot.alpha > 0.01 && dot.colorType !== 0) {
                 const base = BASE_COLORS[dot.colorType];
@@ -7992,6 +8051,9 @@ function drawLEDWithAfterglow() {
             ctx.closePath();
             ctx.fillStyle = fillStyle;
             ctx.fill();
+            ctx.lineWidth = 0.5;
+            ctx.strokeStyle = '#111111';
+            ctx.stroke();
         }
     }
 }
@@ -8049,10 +8111,21 @@ function buildRunInfoEntries(lines) {
     return ordered;
 }
 
+function normalizeRunInfoText(text) {
+    return text
+        .normalize('NFKC')
+        .replace(/[\u0020]/g, '　')
+        .replace(/[\u0021-\u007E]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) + 0xFEE0));
+}
+
 function buildRunInfoSequence(lines) {
     const entries = lines.map(line => {
-        const tokens = parseText(`<2><運行情報>　<3>${line}`);
-        return generateMessageMatrix(tokens);
+        const normalizedLine = normalizeRunInfoText(line);
+        const tokens = parseText(`<2><運行情報>　<3>${normalizedLine}`, { forceFullWidth: true });
+        return generateMessageMatrix(tokens, {
+            useMissingGlyphFallback: true,
+            fontFamily: RUN_INFO_BITMAP_FONT_FAMILY
+        });
     });
 
     const totalWidth = entries.reduce((sum, entry) => sum + entry.totalWidth, 0)
@@ -8153,6 +8226,7 @@ function startScrollingSequence(sequenceMatrix, totalWidth) {
 }
 
 async function startRunInfoMode() {
+    await ensureRunInfoBitmapFontLoaded();
     await refreshRunInfoSequence({ preservePriority: true });
     startScrollingSequence(runInfoSequence.matrix, runInfoSequence.totalWidth);
     stopRunInfoAutoRefresh();
@@ -8168,13 +8242,13 @@ async function startRunInfoMode() {
     }, RUN_INFO_REFRESH_INTERVAL_MS);
 }
 
-
 async function updateDisplay() {
     clearAnimationState();
     stopRunInfoAutoRefresh();
 
     const text = document.getElementById('inputText').value;
     const align = document.getElementById('alignSelect').value;
+    updateExportButtonState();
 
     if (align === 'scroll') {
         const tokens = parseText(text);
@@ -8224,8 +8298,15 @@ document.getElementById('inputText').addEventListener('keypress', function(e) {
 const exportBtn = document.getElementById('exportBtn');
 const exportFormat = document.getElementById('exportFormat');
 const exportNote = document.getElementById('exportNote');
+const exportControlGroup = document.getElementById('exportControlGroup');
 
 function updateExportButtonState() {
+    const align = document.getElementById('alignSelect').value;
+    const hideExportUI = (align === 'scroll' || align === 'runinfo');
+
+    exportControlGroup.style.display = hideExportUI ? 'none' : 'flex';
+    exportNote.style.display = hideExportUI ? 'none' : 'block';
+
     exportFormat.disabled = false;
     exportFormat.style.opacity = '1';
     exportFormat.style.cursor = 'pointer';
@@ -8467,13 +8548,17 @@ async function createStaticCaptureBase(metrics) {
     return baseCanvas;
 }
 
-document.getElementById('alignSelect').addEventListener('change', updateExportButtonState);
+document.getElementById('alignSelect').addEventListener('change', () => {
+    updateExportButtonState();
+});
+
 updateExportButtonState();
 
 exportBtn.addEventListener('click', async () => {
     await exportVisibleImage();
 });
 
+drawLEDWithAfterglow();
 updateDisplay();
 </script>
 
