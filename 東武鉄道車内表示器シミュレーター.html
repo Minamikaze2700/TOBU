@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -7818,6 +7817,52 @@ const BASE_COLORS = {
 const RUN_INFO_FILE_NAME = '運行情報.txt';
 const RUN_INFO_REFRESH_INTERVAL_MS = 5000;
 const RUN_INFO_GAP_COLUMNS = 160;
+const RUN_INFO_LIVE_FETCH_TIMEOUT_MS = 4500;
+const RUN_INFO_LIVE_SOURCES = [
+    {
+        key: 'tobu',
+        label: '東武',
+        url: 'https://www.tobu.co.jp/service_status/',
+        lineNames: [
+            { short: 'スカイツリーライン・伊勢崎線', aliases: ['東武スカイツリーライン', '東武伊勢崎線', '東武伊勢崎線 久喜 以北エリア'] },
+            { short: '日光線', aliases: ['東武日光線', '東武日光線 南栗橋 以北エリア'] },
+            { short: '東上線', aliases: ['東武東上線', '東武東上本線'] },
+            { short: '亀戸線', aliases: ['東武亀戸線'] },
+            { short: '大師線', aliases: ['東武大師線'] },
+            { short: 'アーバンパークライン', aliases: ['東武アーバンパークライン', '東武野田線'] },
+            { short: '越生線', aliases: ['東武越生線'] },
+            { short: '佐野線', aliases: ['東武佐野線'] },
+            { short: '桐生線', aliases: ['東武桐生線'] },
+            { short: '小泉線', aliases: ['東武小泉線'] },
+            { short: '宇都宮線', aliases: ['東武宇都宮線'] },
+            { short: '鬼怒川線', aliases: ['東武鬼怒川線'] }
+        ]
+    },
+    { key: 'seibu', label: '西武', lineName: '西武線', url: 'https://www.seiburailway.jp/railway/railwayinfo/' },
+    { key: 'keio', label: '京王', lineName: '京王線・井の頭線', url: 'https://www.keio.co.jp/unkou/unkou_pc.html' },
+    { key: 'odakyu', label: '小田急', lineName: '小田急線', url: 'https://traininfo.odakyu-rt.jp/train_status' },
+    { key: 'keikyu', label: '京急', lineName: '京急線', url: 'https://unkou.keikyu.co.jp/' },
+    { key: 'sotetsu', label: '相鉄', lineName: '相鉄線', url: 'https://www.sotetsu.co.jp/train/status/' },
+    { key: 'tokyu', label: '東急', lineName: '東急線・みなとみらい線', url: 'https://www.tokyu.co.jp/unten2/unten.html' },
+    { key: 'keisei', label: '京成', lineName: '京成線', url: 'https://www.keisei.co.jp/' },
+    { key: 'tokyometro', label: '東京メトロ', lineName: '東京メトロ線', url: 'https://www.tokyometro.jp/index.html' }
+];
+
+const RUN_INFO_STATUS_KEYWORDS = [
+    '運転を見合わせ',
+    '運転見合わせ',
+    '見合わせ',
+    '運休',
+    '遅れが出',
+    '遅れがで',
+    '遅延',
+    'ダイヤが乱',
+    '直通運転中止',
+    '折返し運転',
+    '行先変更',
+    '平常通り運転',
+    '平常どおり運転'
+];
 
 const canvas = document.getElementById('ledCanvas');
 const ctx = canvas.getContext('2d');
@@ -8112,8 +8157,235 @@ function buildRunInfoEntries(lines) {
     return ordered;
 }
 
+function escapeRunInfoRegExp(text) {
+    return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeRunInfoWhitespace(text) {
+    return String(text || '')
+        .replace(/\r/g, '\n')
+        .replace(/[\u3000\t]+/g, '　')
+        .replace(/\s+\n/g, '\n')
+        .replace(/\n\s+/g, '\n')
+        .trim();
+}
+
+function htmlToRunInfoText(sourceText) {
+    const trimmed = String(sourceText || '').trim();
+    if (!trimmed) return '';
+    if (/[<][a-z!/?]/i.test(trimmed)) {
+        const doc = new DOMParser().parseFromString(trimmed, 'text/html');
+        return normalizeRunInfoWhitespace(doc.body ? doc.body.innerText : doc.documentElement.textContent);
+    }
+    return normalizeRunInfoWhitespace(trimmed);
+}
+
+function splitStatusSentences(text) {
+    return normalizeRunInfoWhitespace(text)
+        .split(/[。\n]/)
+        .map(part => part.trim())
+        .filter(Boolean);
+}
+
+function isStatusSentence(sentence) {
+    return RUN_INFO_STATUS_KEYWORDS.some(keyword => sentence.includes(keyword));
+}
+
+function stripDecorations(text) {
+    return String(text || '')
+        .replace(/^[◎●○◆■・\s]+/, '')
+        .replace(/[\s]+/g, ' ')
+        .trim();
+}
+
+function buildRunInfoSentence(lineName, body) {
+    const shortLine = stripDecorations(lineName);
+    let sentence = stripDecorations(body).replace(/[。]+$/g, '');
+    if (!shortLine || !sentence) {
+        return '';
+    }
+
+    const linePrefixes = [
+        `${shortLine}は`,
+        `${shortLine}は、`,
+        `${shortLine}は:`,
+        `${shortLine}は：`,
+        `${shortLine}:`,
+        `${shortLine}：`
+    ];
+    for (const prefix of linePrefixes) {
+        if (sentence.startsWith(prefix)) {
+            sentence = sentence.slice(prefix.length).trim();
+            break;
+        }
+    }
+    return `${shortLine}は、${sentence}。`;
+}
+
+function normalizeTobuLineName(lineName) {
+    return String(lineName || '')
+        .replace(/^東武/, '')
+        .replace(/東武スカイツリーライン/, 'スカイツリーライン')
+        .replace(/東武伊勢崎線/, '伊勢崎線')
+        .replace(/東武日光線/, '日光線')
+        .replace(/東武東上線/, '東上線')
+        .replace(/東武東上本線/, '東上本線')
+        .replace(/東武アーバンパークライン/, 'アーバンパークライン')
+        .replace(/東武野田線/, 'アーバンパークライン')
+        .replace(/東武亀戸線/, '亀戸線')
+        .replace(/東武大師線/, '大師線')
+        .replace(/東武越生線/, '越生線')
+        .replace(/東武佐野線/, '佐野線')
+        .replace(/東武桐生線/, '桐生線')
+        .replace(/東武小泉線/, '小泉線')
+        .replace(/東武宇都宮線/, '宇都宮線')
+        .replace(/東武鬼怒川線/, '鬼怒川線')
+        .replace(/東武線/, '線');
+}
+
+async function fetchTextWithTimeout(url, timeoutMs = RUN_INFO_LIVE_FETCH_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(url, {
+            cache: 'no-store',
+            signal: controller.signal,
+            mode: 'cors',
+            credentials: 'omit'
+        });
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        return await response.text();
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+async function fetchRemotePageText(url) {
+    const candidates = [
+        url,
+        `https://r.jina.ai/http://${url.replace(/^https?:\/\//, '')}`
+    ];
+
+    for (const candidate of candidates) {
+        try {
+            const text = await fetchTextWithTimeout(candidate);
+            if (text && text.trim()) {
+                return text;
+            }
+        } catch (error) {
+            // 次の候補へ
+        }
+    }
+    return '';
+}
+
+function pickStatusSentence(text, lineName = '') {
+    const sentences = splitStatusSentences(text);
+    const aliases = lineName ? [lineName] : [];
+    const candidates = sentences.filter(sentence => {
+        const hasLine = !aliases.length || aliases.some(alias => sentence.includes(alias));
+        return hasLine && isStatusSentence(sentence);
+    });
+
+    if (candidates.length > 0) {
+        return stripDecorations(candidates[0]);
+    }
+
+    const fallback = sentences.find(sentence => isStatusSentence(sentence));
+    return fallback ? stripDecorations(fallback) : '';
+}
+
+function extractOperatorStatus(text, lineName) {
+    const sentence = pickStatusSentence(text, lineName);
+    return sentence ? buildRunInfoSentence(lineName, sentence) : '';
+}
+
+function extractTobuStatuses(text) {
+    const sentences = splitStatusSentences(text);
+    const results = [];
+    const seenShortNames = new Set();
+
+    const groups = RUN_INFO_LIVE_SOURCES.find(source => source.key === 'tobu')?.lineNames || [];
+    for (const group of groups) {
+        const matchedSentence = sentences.find(sentence =>
+            isStatusSentence(sentence) &&
+            group.aliases.some(alias => sentence.includes(alias) || sentence.includes(normalizeTobuLineName(alias)))
+        );
+
+        if (matchedSentence) {
+            const shortName = normalizeTobuLineName(group.short);
+            if (!seenShortNames.has(shortName)) {
+                seenShortNames.add(shortName);
+                results.push(buildRunInfoSentence(shortName, matchedSentence));
+            }
+        }
+    }
+
+    if (results.length === 0) {
+        const summarySentence = sentences.find(sentence =>
+            isStatusSentence(sentence) &&
+            (sentence.includes('東武線') || sentence.includes('東武鉄道'))
+        ) || sentences.find(sentence => isStatusSentence(sentence));
+
+        if (summarySentence) {
+            results.push(buildRunInfoSentence('東武線', summarySentence));
+        }
+    }
+
+    return results;
+}
+
+async function fetchLiveRunInfoText() {
+    const tasks = RUN_INFO_LIVE_SOURCES.map(async (source) => {
+        try {
+            const raw = await fetchRemotePageText(source.url);
+            if (!raw) return [];
+
+            const text = htmlToRunInfoText(raw);
+            if (!text) return [];
+
+            if (source.key === 'tobu') {
+                return extractTobuStatuses(text);
+            }
+
+            const lineName = source.lineName || source.label;
+            const sentence = extractOperatorStatus(text, lineName);
+            return sentence ? [sentence] : [];
+        } catch (error) {
+            return [];
+        }
+    });
+
+    const results = await Promise.all(tasks);
+    const flattened = results.flat().filter(Boolean);
+
+    const unique = [];
+    const seen = new Set();
+    for (const line of flattened) {
+        if (!seen.has(line)) {
+            seen.add(line);
+            unique.push(line);
+        }
+    }
+    return unique.join('\n');
+}
+
+async function fetchLocalRunInfoText() {
+    try {
+        const response = await fetch(RUN_INFO_FILE_NAME, { cache: 'no-store' });
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        return await response.text();
+    } catch (error) {
+        return DEFAULT_RUN_INFO_TEXT;
+    }
+}
+
 function normalizeRunInfoText(text) {
-    return text
+    return String(text || '')
         .normalize('NFKC')
         .replace(/[\u0020]/g, '　')
         .replace(/[\u0021-\u007E]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) + 0xFEE0));
@@ -8151,15 +8423,12 @@ function buildRunInfoSequence(lines) {
 }
 
 async function fetchRunInfoText() {
-    try {
-        const response = await fetch(RUN_INFO_FILE_NAME, { cache: 'no-store' });
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-        return await response.text();
-    } catch (error) {
-        return DEFAULT_RUN_INFO_TEXT;
+    const liveText = await fetchLiveRunInfoText();
+    if (liveText && liveText.trim()) {
+        return liveText;
     }
+    const localText = await fetchLocalRunInfoText();
+    return localText || DEFAULT_RUN_INFO_TEXT;
 }
 
 async function refreshRunInfoSequence({ preservePriority = true } = {}) {
