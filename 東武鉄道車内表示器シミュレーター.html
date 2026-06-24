@@ -142,7 +142,7 @@
             <button id="exportBtn">画像を出力</button>
         </div>
         <div class="legend" id="exportNote" style="margin-top: 4px;">
-            スクロール／運行情報表示時は動画を、その他の表示では画像を出力します。
+            左寄せ・中央揃え・右寄せでは画像を出力します。
         </div>
     </div>
 
@@ -7806,7 +7806,8 @@ const FONT_DATA = {
         [0,0,0,0,0,0,0,0]
     ],
     ' ': Array.from({length: 16}, () => Array(8).fill(0))
-};// ベースとなる3色LEDの発光カラー定義
+};
+// ベースとなる3色LEDの発光カラー定義
 const BASE_COLORS = {
     1: { r: 128, g: 255, b: 0,   css: 'rgb(128,255,0)' },  // 黄緑
     2: { r: 255, g: 0,   b: 64,  css: 'rgb(255,0,64)' },    // 赤
@@ -8231,18 +8232,14 @@ const exportFormat = document.getElementById('exportFormat');
 const exportNote = document.getElementById('exportNote');
 
 function updateExportButtonState() {
-    const isScrollLike = document.getElementById('alignSelect').value === 'scroll'
-        || document.getElementById('alignSelect').value === 'runinfo';
-    exportFormat.disabled = isScrollLike;
-    exportFormat.style.opacity = isScrollLike ? '0.5' : '1';
-    exportFormat.style.cursor = isScrollLike ? 'not-allowed' : 'pointer';
+    exportFormat.disabled = false;
+    exportFormat.style.opacity = '1';
+    exportFormat.style.cursor = 'pointer';
     exportBtn.disabled = false;
-    exportBtn.textContent = isScrollLike ? '動画を出力' : '画像を出力';
+    exportBtn.textContent = '画像を出力';
     exportBtn.style.opacity = '1';
     exportBtn.style.cursor = 'pointer';
-    exportNote.textContent = isScrollLike
-        ? 'スクロール／運行情報表示時は動画を出力します。'
-        : 'スクロール／運行情報表示時以外は画像を出力します。';
+    exportNote.textContent = '左寄せ・中央揃え・右寄せでは画像を出力します。';
 }
 
 function svgToDataURL(svgElement) {
@@ -8292,7 +8289,7 @@ function drawRoundedRect(ctx, x, y, width, height, radius) {
 async function exportVisibleImage() {
     const currentMode = document.getElementById('alignSelect').value;
     if (currentMode === 'scroll' || currentMode === 'runinfo') {
-        alert('スクロール表示中は画像出力できません。左寄せ・中央揃え・右寄せに切り替えてください。');
+        alert('画像出力は左寄せ・中央揃え・右寄せで使えます。');
         return;
     }
 
@@ -8363,14 +8360,9 @@ async function exportVisibleImage() {
 }
 
 
-const videoBtn = document.getElementById('videoBtn');
 const captureArea = document.getElementById('captureArea');
 const ledContainer = document.getElementById('led-container');
 const ledSvg = document.querySelector('.speaker-grille');
-
-function nextFrame() {
-    return new Promise(resolve => requestAnimationFrame(() => resolve()));
-}
 
 function getCaptureMetrics() {
     const areaRect = captureArea.getBoundingClientRect();
@@ -8481,113 +8473,12 @@ async function createStaticCaptureBase(metrics) {
     return baseCanvas;
 }
 
-function pickRecorderMimeType() {
-    const candidates = [
-        'video/webm;codecs=vp9,opus',
-        'video/webm;codecs=vp8,opus',
-        'video/webm'
-    ];
-
-    for (const type of candidates) {
-        if (window.MediaRecorder && MediaRecorder.isTypeSupported(type)) {
-            return type;
-        }
-    }
-    return '';
-}
-
-
-async function exportScrollVideo() {
-    const align = document.getElementById('alignSelect').value;
-    if (align !== 'scroll' && align !== 'runinfo') {
-        alert('動画出力は「スクロール」か「運行情報を表示」のときだけ使えます。');
-        return;
-    }
-
-    let exportData;
-    if (align === 'runinfo') {
-        await refreshRunInfoSequence({ preservePriority: true });
-        exportData = runInfoSequence;
-    } else {
-        const text = document.getElementById('inputText').value;
-        const tokens = parseText(text);
-        exportData = buildScrollExportMatrix(tokens);
-    }
-
-    const metrics = getCaptureMetrics();
-    const baseCanvas = await createStaticCaptureBase(metrics);
-
-    const outWidth = Math.round(metrics.areaRect.width);
-    const outHeight = Math.round(metrics.areaRect.height);
-    const videoCanvas = document.createElement('canvas');
-    videoCanvas.width = outWidth;
-    videoCanvas.height = outHeight;
-    const videoCtx = videoCanvas.getContext('2d');
-    videoCtx.imageSmoothingEnabled = false;
-
-    const canvasX = Math.round(metrics.canvasRect.left - metrics.areaRect.left);
-    const canvasY = Math.round(metrics.canvasRect.top - metrics.areaRect.top);
-
-    const mimeType = pickRecorderMimeType();
-    if (!mimeType) {
-        alert('このブラウザでは動画録画機能が使えません。');
-        return;
-    }
-
-    const fps = 30;
-    const stream = videoCanvas.captureStream(fps);
-    const chunks = [];
-    const recorder = new MediaRecorder(stream, { mimeType });
-
-    recorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) chunks.push(e.data);
-    };
-
-    const stopped = new Promise(resolve => {
-        recorder.onstop = resolve;
-    });
-
-    recorder.start();
-
-    // 画面表示と切り離して、1フレームごとの位置を完全固定で生成する
-    const scrollColsPerFrame = VIDEO_SCROLL_COLUMNS_PER_SECOND / fps;
-    const startOffset = -COLS;
-    const endOffset = exportData.totalWidth;
-    const totalFrames = Math.ceil((endOffset - startOffset) / scrollColsPerFrame) + 1;
-
-    for (let frame = 0; frame < totalFrames; frame++) {
-        const offset = startOffset + frame * scrollColsPerFrame;
-        videoCtx.clearRect(0, 0, outWidth, outHeight);
-        videoCtx.drawImage(baseCanvas, 0, 0);
-        drawMatrixFrame(videoCtx, exportData.matrix, canvasX, canvasY, offset);
-        await nextFrame();
-    }
-
-    recorder.stop();
-    await stopped;
-
-    const ext = 'webm';
-    const blob = new Blob(chunks, { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `led_scroll_video.${ext}`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-('click', async () => {
-    const align = document.getElementById('alignSelect').value;
-    if (align === 'scroll') {
-        await exportScrollVideo();
-    } else {
-        await exportVisibleImage();
-    }
-});
 document.getElementById('alignSelect').addEventListener('change', updateExportButtonState);
 updateExportButtonState();
+
+exportBtn.addEventListener('click', async () => {
+    await exportVisibleImage();
+});
 
 updateDisplay();
 </script>
