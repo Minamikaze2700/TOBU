@@ -1,25 +1,15 @@
 {
   "items": [
     {
-      "id": "mr1rl4d0-f9v614lr",
+      "id": "mr1rld8s-4r77qtf8",
       "routeJa": "æ±æ­¦éç°ç·",
       "routeEn": "Noda Line",
       "time": "ï¼ï¼ï¼ï¼ï¼",
       "reason": "è¨­åç¹æ¤",
       "note": "",
       "status": "delay",
-      "createdAt": "2026-07-01T07:38:54.420Z"
-    },
-    {
-      "id": "mr1rld8s-4r77qtf8",
-      "routeJa": "東武野田線",
-      "routeEn": "Noda Line",
-      "time": "１２：３４",
-      "reason": "設備点検",
-      "note": "",
-      "status": "delay",
       "createdAt": "2026-07-01T07:39:05.932Z"
     }
   ],
-  "updatedAt": "2026-07-01T07:39:04.091Z"
+  "updatedAt": "2026-07-01T07:39:11.014Z"
 }
