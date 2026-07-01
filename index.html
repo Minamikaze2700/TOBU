@@ -273,7 +273,7 @@
         </div>
         <div class="tiny">
           日本語入力欄に入った英数字は自動で全角化します。英語欄は半角のまま保存されます。<br>
-          登録した行は自動で GitHub 側の <code>unkojoho.txt</code> と <code>unkojoho.json</code> に反映されます。
+          登録した行は自動で GitHub 側の <code>運行情報.txt</code> に反映されます。
         </div>
       </div>
     </section>
@@ -283,9 +283,9 @@
         <div class="toolbar">
           <div>
             <h2>登録済み情報</h2>
-            <div class="tiny">各項目は個別の「解除」で削除されます。変更は自動同期です。</div>
+            <div class="tiny">各項目は個別の「解除」で削除されます。変更は GitHub 側の運行情報.txt にも即反映されます。</div>
           </div>
-          <span class="pill">txt への書き出しは自動</span>
+          <span class="pill">txt への書き出しは自動 / 10秒ごとに再読込</span>
         </div>
       </div>
       <div class="card-body">
@@ -306,6 +306,7 @@
 <script>
 const STORAGE_KEY = "train_delay_sync_config_v1";
 const STATE_KEY = "train_delay_sync_state_v1";
+const REFRESH_INTERVAL_MS = 1000;
 
 const DEFAULT_STATUS = {
   delay: { ja: "遅れがでています", en: "Delay" },
@@ -318,8 +319,8 @@ const $ = (id) => document.getElementById(id);
 const state = {
   items: [],
   saving: false,
-  loadTimer: null,
-  saveTimer: null,
+  refreshing: false,
+  refreshTimer: null,
 };
 
 function uid() {
@@ -328,7 +329,7 @@ function uid() {
 
 function toFullWidthAscii(text) {
   if (!text) return "";
-  return String(text).replace(/[!-~]/g, ch => {
+  return String(text).replace(/[!-~]/g, (ch) => {
     if (ch === " ") return "　";
     return String.fromCharCode(ch.charCodeAt(0) + 0xFEE0);
   });
@@ -374,9 +375,9 @@ function buildLine(item) {
   const route = item.routeJa ? normalizeJapaneseInput(item.routeJa) : "";
   const routeEn = sanitizeEnglish(item.routeEn);
   const time = item.time ? normalizeJapaneseInput(item.time) + "頃" : "";
-  const reason = item.reason ? normalizeJapaneseInput(item.reason) + "のため、": "";
+  const reason = item.reason ? normalizeJapaneseInput(item.reason) + "のため、" : "";
 
-  return `${route}は${time}　${reason}${status.ja}。　${routeEn}/${status.en}`;
+  return `${route}は、${time}　${reason}${status.ja}。　${routeEn}/${status.en}`;
 }
 
 function generateText(items) {
@@ -416,10 +417,10 @@ function render() {
     const remove = document.createElement("button");
     remove.className = "danger";
     remove.textContent = "解除";
-    remove.addEventListener("click", () => {
-      state.items = state.items.filter(x => x.id !== item.id);
-      scheduleSave();
+    remove.addEventListener("click", async () => {
+      state.items = state.items.filter((x) => x.id !== item.id);
       render();
+      await syncToWorker();
     });
 
     head.appendChild(left);
@@ -457,11 +458,6 @@ function currentInputItem() {
   };
 }
 
-function scheduleSave() {
-  clearTimeout(state.saveTimer);
-  state.saveTimer = setTimeout(syncToWorker, 700);
-}
-
 function setSyncStatus(kind, text) {
   const dot = $("syncDot");
   dot.classList.remove("ok", "bad");
@@ -470,52 +466,72 @@ function setSyncStatus(kind, text) {
   $("syncText").textContent = text;
 }
 
-async function fetchStateFromWorker() {
+async function fetchStateFromWorker({ silent = false } = {}) {
   const workerUrl = $("workerUrl").value.trim();
   if (!workerUrl) {
     setSyncStatus("bad", "Worker URL 未設定");
-    return;
+    return false;
   }
+
   try {
-    setSyncStatus("", "同期中…");
-    const res = await fetch(`${workerUrl.replace(/\/$/, "")}/state`, { cache: "no-store" });
+    state.refreshing = true;
+    if (!silent) setSyncStatus("", "運行情報.txt を読み込み中…");
+
+    const res = await fetch(`${workerUrl.replace(/\/$/, "")}/state`, {
+      cache: "no-store",
+    });
+
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
     const data = await res.json();
     state.items = Array.isArray(data.items) ? data.items : [];
-    render();
     localStorage.setItem(STATE_KEY, JSON.stringify(state.items));
-    setSyncStatus("ok", "GitHub から読み込みました");
+    render();
+    if (!silent) setSyncStatus("ok", "GitHub の運行情報.txt を読み込みました");
+    return true;
   } catch (err) {
     try {
       state.items = JSON.parse(localStorage.getItem(STATE_KEY) || "[]");
       render();
-    } catch {}
-    setSyncStatus("bad", "読み込み失敗（ローカル表示）");
+    } catch {
+      state.items = [];
+      render();
+    }
+    if (!silent) setSyncStatus("bad", "読み込み失敗（ローカル表示）");
+    return false;
+  } finally {
+    state.refreshing = false;
   }
 }
 
 async function syncToWorker() {
   const workerUrl = $("workerUrl").value.trim();
   saveInputs();
+
   if (!workerUrl) {
     setSyncStatus("bad", "Worker URL 未設定");
     localStorage.setItem(STATE_KEY, JSON.stringify(state.items));
     return;
   }
+
   try {
     state.saving = true;
-    setSyncStatus("", "書き出し中…");
+    setSyncStatus("", "GitHub の運行情報.txt を更新中…");
     localStorage.setItem(STATE_KEY, JSON.stringify(state.items));
+
     const res = await fetch(`${workerUrl.replace(/\/$/, "")}/sync`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ items: state.items }),
     });
+
     if (!res.ok) {
       const text = await res.text();
       throw new Error(text || `HTTP ${res.status}`);
     }
-    setSyncStatus("ok", "GitHub の txt/json を更新しました");
+
+    setSyncStatus("ok", "GitHub の運行情報.txt を更新しました");
+    await fetchStateFromWorker({ silent: true });
   } catch (err) {
     setSyncStatus("bad", "同期失敗");
     console.error(err);
@@ -538,26 +554,34 @@ function wireLiveConversion(id, english = false) {
   });
 }
 
+function startAutoRefresh() {
+  clearInterval(state.refreshTimer);
+  state.refreshTimer = setInterval(() => {
+    fetchStateFromWorker({ silent: true });
+  }, REFRESH_INTERVAL_MS);
+}
+
 $("workerUrl").addEventListener("change", async () => {
   saveInputs();
   await fetchStateFromWorker();
 });
 
-$("addBtn").addEventListener("click", () => {
+$("addBtn").addEventListener("click", async () => {
   const item = currentInputItem();
   if (!item) {
     setSyncStatus("bad", "入力が空です");
     return;
   }
+
   state.items.push(item);
   render();
-  scheduleSave();
-  ["routeJa","routeEn","time","reason","note"].forEach(id => $(id).value = "");
+  ["routeJa", "routeEn", "time", "reason", "note"].forEach((id) => $(id).value = "");
   setSyncStatus("", "登録しました");
+  await syncToWorker();
 });
 
 $("clearBtn").addEventListener("click", () => {
-  ["routeJa","routeEn","time","reason","note"].forEach(id => $(id).value = "");
+  ["routeJa", "routeEn", "time", "reason", "note"].forEach((id) => $(id).value = "");
   $("status").value = "delay";
   saveInputs();
   setSyncStatus("", "入力をクリアしました");
@@ -581,9 +605,11 @@ try {
 }
 render();
 fetchStateFromWorker();
+startAutoRefresh();
 
 window.addEventListener("beforeunload", () => {
   localStorage.setItem(STATE_KEY, JSON.stringify(state.items));
+  clearInterval(state.refreshTimer);
 });
 </script>
 </body>
